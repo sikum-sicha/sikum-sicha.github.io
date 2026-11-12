@@ -2,7 +2,7 @@
    ההקלטה נשלחת ישירות מהמכשיר ל-Gemini API עם המפתח של המשתמש. אין שרת ביניים. */
 'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.1.1';
 const API = 'https://generativelanguage.googleapis.com';
 const MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
 const MODEL_NAMES = {
@@ -23,7 +23,18 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const pad2 = (n) => String(n).padStart(2, '0');
 
-const settings = { apiKey: '', model: 'auto', ownerName: '', ownerAbout: '', autoStart: true };
+const settings = { apiKey: '', model: 'auto', ownerName: '', ownerAbout: '', autoStart: true, theme: 'light' };
+
+// ערכת צבעים: בהיר (ברירת מחדל), כהה, או לפי הגדרות הטלפון
+function applyTheme() {
+  const t = settings.theme || 'light';
+  const root = document.documentElement;
+  if (t === 'auto') root.removeAttribute('data-theme');
+  else root.setAttribute('data-theme', t);
+  const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', dark ? '#14201e' : '#1f5f57');
+}
 const state = { schemaMode: 'json', thinkingMode: 'lower', stream: true, job: null, queueRunning: false, expect: '', installPrompt: null, view: '' };
 
 class AppError extends Error {
@@ -1349,6 +1360,11 @@ async function showSettings() {
     </section>
     <section class="card">
       <h2>איך לסכם</h2>
+      <label class="field"><span>ערכת צבעים</span><select id="theme">
+        <option value="light"${(settings.theme || 'light') === 'light' ? ' selected' : ''}>בהיר</option>
+        <option value="dark"${settings.theme === 'dark' ? ' selected' : ''}>כהה</option>
+        <option value="auto"${settings.theme === 'auto' ? ' selected' : ''}>לפי הגדרות הטלפון</option>
+      </select></label>
       <label class="field"><span>השם שלך (לא חובה)</span><input class="input" id="ownerName" value="${esc(settings.ownerName)}" placeholder="למשל: דנה"></label>
       <label class="field"><span>כמה מילים עליך ועל השיחות שלך (לא חובה)</span>
         <textarea id="ownerAbout" placeholder="למשל: מנהלת פרויקטים בחברת בנייה. רוב השיחות עם ספקים, קבלני משנה ויועצים.">${esc(settings.ownerAbout)}</textarea></label>
@@ -1398,6 +1414,11 @@ async function showSettings() {
   };
   $('#model').onchange = (e) => {
     settings.model = e.target.value;
+    saveSoon();
+  };
+  $('#theme').onchange = (e) => {
+    settings.theme = e.target.value;
+    applyTheme();
     saveSoon();
   };
   $('#autoStart').onchange = (e) => {
@@ -1510,6 +1531,7 @@ async function init() {
   } catch (e) {
     toast('הדפדפן חוסם אחסון מקומי. האתר לא יוכל לשמור סיכומים.', 6000);
   }
+  applyTheme();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   const q = new URLSearchParams(location.search);
   const shared = q.has('shared');
