@@ -2,7 +2,7 @@
    ההקלטה נשלחת ישירות מהמכשיר ל-Gemini API עם המפתח של המשתמש. אין שרת ביניים. */
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const API = 'https://generativelanguage.googleapis.com';
 const MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
 const MODEL_NAMES = {
@@ -24,7 +24,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const pad2 = (n) => String(n).padStart(2, '0');
 
 const settings = { apiKey: '', model: 'auto', ownerName: '', ownerAbout: '', autoStart: true };
-const state = { schemaMode: 'json', job: null, queueRunning: false, expect: '', installPrompt: null, view: '' };
+const state = { schemaMode: 'json', thinkingMode: 'lower', stream: true, job: null, queueRunning: false, expect: '', installPrompt: null, view: '' };
 
 class AppError extends Error {
   constructor(message, kind, detail) {
@@ -40,6 +40,7 @@ async function loadSettings() {
   const saved = await csStore.get('kv', 'settings');
   Object.assign(settings, saved || {});
   state.schemaMode = (await csStore.get('kv', 'schemaMode')) || 'json';
+  state.thinkingMode = (await csStore.get('kv', 'thinkingMode')) || 'lower';
 }
 
 async function saveSettings() {
@@ -243,9 +244,16 @@ function toOpenApi(s) {
   return out;
 }
 
-function buildBody(part, meta, schema, mode, opts) {
+// חשיבה נמוכה = תשובה מהירה יותר. תמלול וסיכום לא צריכים חשיבה עמוקה.
+const THINKING = { 'gemini-3.8-flash': 'low', 'gemini-3.6-flash': 'low', 'gemini-3.5-flash-lite': 'minimal' };
+
+function buildBody(part, meta, schema, mode, opts, model) {
   let sys = buildPrompt(meta, opts);
   const generationConfig = { responseMimeType: 'application/json' };
+  const level = THINKING[model];
+  if (level && state.thinkingMode !== 'off') {
+    generationConfig.thinkingConfig = { thinkingLevel: state.thinkingMode === 'upper' ? level.toUpperCase() : level };
+  }
   if (mode === 'json') generationConfig.responseJsonSchema = schema;
   else if (mode === 'openapi') generationConfig.responseSchema = toOpenApi(schema);
   else sys += '\n\nהחזר אך ורק אובייקט JSON תקין, בלי טקסט נוסף, במבנה הזה (JSON Schema):\n' + JSON.stringify(schema);
@@ -334,36 +342,163 @@ function parseJsonLoose(text) {
   return null;
 }
 
-async function generate(model, part, meta, opts, signal) {
+function isThinkingError(res) {
+  const m = (res.json && res.json.error && res.json.error.message) || '';
+  return res.status === 400 && /thinking/i.test(m);
+}
+
+const partsText = (c) =>
+  ((c && c.content && c.content.parts) || [])
+    .filter((p) => p && !p.thought && typeof p.text === 'string')
+    .map((p) => p.text)
+    .join('');
+
+// הזרמה (SSE): הטקסט מגיע בחלקים, כך שאפשר להציג את הסיכום עוד לפני שהתמלול נגמר.
+// מחזיר null אם ההזרמה לא זמינה או שהפורמט לא מוכר – ואז עוברים לבקשה רגילה.
+async function gstream(model, body, signal, onText) {
+  let res;
+  try {
+    res = await fetch(`${API}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
+      method: 'POST',
+      signal,
+      headers: { 'x-goog-api-key': settings.apiKey, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') throw e;
+    return null;
+  }
+  if (!res.ok) {
+    let json = null;
+    try {
+      json = await res.json();
+    } catch (e) {
+      /* לא JSON */
+    }
+    return { ok: false, status: res.status, json };
+  }
+  if (!res.body || !res.body.getReader) return null;
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let text = '';
+  let finish = '';
+  let block = '';
+  let events = 0;
+  let error = null;
+  const handle = (event) => {
+    const data = event
+      .split('\n')
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).trim())
+      .join('');
+    if (!data) return;
+    let j;
+    try {
+      j = JSON.parse(data);
+    } catch (e) {
+      return;
+    }
+    events++;
+    if (j.error) {
+      error = { ok: false, status: j.error.code || 500, json: j };
+      return;
+    }
+    const c = j.candidates && j.candidates[0];
+    if (!c) {
+      if (j.promptFeedback && j.promptFeedback.blockReason) block = j.promptFeedback.blockReason;
+      return;
+    }
+    const delta = partsText(c);
+    if (delta) {
+      text += delta;
+      if (onText) onText(text);
+    }
+    if (c.finishReason) finish = c.finishReason;
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true }).replace(/\r/g, '');
+    let idx;
+    while ((idx = buf.indexOf('\n\n')) >= 0) {
+      handle(buf.slice(0, idx));
+      buf = buf.slice(idx + 2);
+    }
+    if (error) break;
+  }
+  if (buf.trim()) handle(buf);
+  if (error) return error;
+  if (!events) return null;
+  return { ok: true, status: 200, text, finish, block };
+}
+
+async function generate(model, part, meta, opts, signal, onText) {
   const schema = opts.summaryOnly ? SUMMARY_SCHEMA : FULL_SCHEMA;
   const modes = ['json', 'openapi', 'prompt'];
-  for (let i = Math.max(0, modes.indexOf(state.schemaMode)); i < modes.length; i++) {
+  let i = Math.max(0, modes.indexOf(state.schemaMode));
+  for (let guard = 0; guard < 8; guard++) {
     const mode = modes[i];
-    const body = buildBody(part, meta, schema, mode, opts);
-    const res = await gfetch(
-      `/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
-      signal
-    );
-    if (!res.ok && isSchemaError(res) && i < modes.length - 1) continue;
-    if (!res.ok) throw apiError(res, { model });
+    const body = buildBody(part, meta, schema, mode, opts, model);
+    let res = null;
+    let text = '';
+    let finish = '';
+    if (state.stream !== false && onText) {
+      const s = await gstream(model, body, signal, onText);
+      if (s === null) state.stream = false; // נמשיך בבקשה רגילה
+      else if (!s.ok) res = s;
+      else {
+        res = s;
+        text = s.text;
+        finish = s.finish;
+        if (!text && s.block) throw new AppError(`Gemini סירב לעבד את ההקלטה (${s.block}).`, 'empty');
+      }
+    }
+    if (!res) {
+      res = await gfetch(
+        `/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+        signal
+      );
+      if (res.ok) {
+        const cand = res.json && res.json.candidates && res.json.candidates[0];
+        if (!cand) {
+          const br = res.json && res.json.promptFeedback && res.json.promptFeedback.blockReason;
+          throw new AppError(br ? `Gemini סירב לעבד את ההקלטה (${br}).` : 'Gemini לא החזיר תשובה. נסה שוב.', 'empty');
+        }
+        text = partsText(cand);
+        finish = cand.finishReason || '';
+      }
+    }
+    if (!res.ok) {
+      if (isThinkingError(res) && state.thinkingMode !== 'off') {
+        state.thinkingMode = state.thinkingMode === 'upper' ? 'off' : 'upper';
+        csStore.put('kv', state.thinkingMode, 'thinkingMode').catch(() => {});
+        continue;
+      }
+      if (isSchemaError(res) && i < modes.length - 1) {
+        i++;
+        continue;
+      }
+      throw apiError(res, { model });
+    }
     if (state.schemaMode !== mode) {
       state.schemaMode = mode;
       csStore.put('kv', mode, 'schemaMode').catch(() => {});
     }
-    const cand = res.json && res.json.candidates && res.json.candidates[0];
-    if (!cand) {
-      const br = res.json && res.json.promptFeedback && res.json.promptFeedback.blockReason;
-      throw new AppError(br ? `Gemini סירב לעבד את ההקלטה (${br}).` : 'Gemini לא החזיר תשובה. נסה שוב.', 'empty');
-    }
-    const text = ((cand.content && cand.content.parts) || [])
-      .filter((p) => p && !p.thought && typeof p.text === 'string')
-      .map((p) => p.text)
-      .join('');
     const data = parseJsonLoose(text);
-    return { data: data && typeof data === 'object' && !Array.isArray(data) ? data : null, finish: cand.finishReason || '' };
+    return { data: data && typeof data === 'object' && !Array.isArray(data) ? data : null, finish };
   }
   throw new AppError('Gemini לא קיבל את מבנה הבקשה.', 'schema');
+}
+
+// מתוך JSON חלקי: הסיכום (כל מה שלפני "transcript") כבר שלם?
+function earlySummary(text) {
+  const idx = text.indexOf('"transcript"');
+  if (idx < 0) return null;
+  const head = text.slice(0, idx).replace(/,\s*$/, '');
+  const obj = parseJsonLoose(head + '}');
+  return obj && typeof obj === 'object' && obj.headline ? normalizeSummary(obj) : null;
 }
 
 function modelOrder() {
@@ -371,11 +506,11 @@ function modelOrder() {
   return m && m !== 'auto' ? [m, ...MODELS.filter((x) => x !== m)] : MODELS.slice();
 }
 
-async function runGemini(part, meta, signal, onStep) {
+async function runGemini(part, meta, signal, onStep, onText) {
   let lastErr = null;
   for (const model of modelOrder()) {
     try {
-      const full = await generate(model, part, meta, {}, signal);
+      const full = await generate(model, part, meta, {}, signal, onText);
       if (full.data) return { data: full.data, model, partial: false };
       // תשובה קטועה (שיחה ארוכה מאוד) או לא תקינה: מבקשים סיכום בלי תמלול
       onStep('short');
@@ -528,7 +663,8 @@ async function processItem(item) {
   }
   const tick = setInterval(renderJobTime, 1000);
   try {
-    const rec = await summarizeRecording(item, controller.signal, setJobStep);
+    const rec = await summarizeRecording(item, controller.signal, setJobStep, onJobText);
+    rec.elapsedSec = Math.max(1, Math.round((Date.now() - state.job.startedAt) / 1000));
     await csStore.put('calls', rec);
     await csStore.del('inbox', item.id);
     return rec.id;
@@ -548,7 +684,7 @@ async function processItem(item) {
   }
 }
 
-async function summarizeRecording(item, signal, onStep) {
+async function summarizeRecording(item, signal, onStep, onText) {
   const meta = callMeta(item.name, item.lastModified);
   const mime = audioMime(item.name, item.type);
   if (!mime) {
@@ -567,7 +703,7 @@ async function summarizeRecording(item, signal, onStep) {
   }
   onStep('ai');
   try {
-    const result = await runGemini(part, meta, signal, onStep);
+    const result = await runGemini(part, meta, signal, onStep, onText);
     const s = normalizeSummary(result.data);
     return {
       id: csNewId('c-'),
@@ -624,13 +760,45 @@ function jobHtml() {
   return `<section class="card job" id="job" aria-busy="true">
     <div class="spinner" aria-hidden="true"></div>
     <h2>מסכם את השיחה…</h2>
-    <p class="small muted" style="word-break:break-word">${esc(j.name)}</p>
+    <p class="small muted" style="word-break:break-word">${recordingLabel(j.name)}</p>
     <ul class="jobsteps">${shown
       .map(([k, label]) => `<li class="${k === j.step ? 'on' : j.done.includes(k) ? 'done' : ''}">${j.done.includes(k) ? '✓ ' : k === j.step ? '● ' : '○ '}${esc(label)}</li>`)
       .join('')}</ul>
-    <p class="small muted"><span id="jobTime">0:00</span> · בדרך כלל לוקח חצי דקה עד שתי דקות. כדאי להשאיר את המסך פתוח.</p>
+    <p class="small muted"><span id="jobTime">0:00</span> · כדאי להשאיר את המסך פתוח עד הסוף.</p>
     <button class="btn" id="cancelJob" type="button">ביטול</button>
-  </section>`;
+  </section><div id="jobLive">${jobLiveHtml()}</div>`;
+}
+
+// שם ידידותי להקלטה: "שיחה עם רועי · יום ד׳ · 11.11.2026 · 08:15" (או שם הקובץ כמו שהוא)
+function recordingLabel(name) {
+  const m = callMeta(name, 0);
+  if (m.contact) return esc(`שיחה עם ${m.contact}${m.fromName ? ' · ' + m.label : ''}`);
+  return `<bdi dir="ltr">${esc(name)}</bdi>`;
+}
+
+// מה שכבר הגיע מ-Gemini בזמן ההזרמה: הסיכום (אם מוכן) ומספר קטעי התמלול
+function jobLiveHtml() {
+  const j = state.job;
+  if (!j || !j.live) return '';
+  const n = j.live.segments;
+  const progress = n ? `כותב את התמלול… ${n} קטעים עד עכשיו` : 'כותב את הסיכום…';
+  if (!j.live.summary) return `<p class="small" style="text-align:center">${esc(progress)}</p>`;
+  return `<article class="card sum"><p class="small" style="margin:0 0 8px;color:var(--ok);font-weight:700">✓ הסיכום מוכן · ${esc(progress)}</p>${summaryBodyHtml(j.live.summary)}</article>`;
+}
+
+let liveTimer = 0;
+function onJobText(text) {
+  const j = state.job;
+  if (!j) return;
+  j.live = j.live || { segments: 0, summary: null };
+  j.live.segments = (text.match(/"speaker"\s*:/g) || []).length;
+  if (!j.live.summary) j.live.summary = earlySummary(text);
+  if (liveTimer) return;
+  liveTimer = setTimeout(() => {
+    liveTimer = 0;
+    const box = $('#jobLive');
+    if (box) box.innerHTML = jobLiveHtml();
+  }, 250);
 }
 
 function bindJob() {
@@ -759,6 +927,7 @@ const ICONS = {
   mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>',
   share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>',
+  install: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>',
 };
 
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -854,6 +1023,7 @@ function showSetup() {
     'setup',
     `<h1>תמלול וסיכום של הקלטות שיחה</h1>
     <p>משתפים לכאן הקלטה של שיחה, ומקבלים תוך דקה תמלול מלא וסיכום מסודר: עיקרי הדברים, החלטות, משימות והצעד הבא. אפשר לשלוח את הסיכום בוואטסאפ או במייל.</p>
+    ${installCardHtml(false)}
     <section class="card">
       <h2>הגדרה חד-פעמית: מפתח Gemini חינמי</h2>
       <p class="small muted">המפתח מאפשר לאתר לשלוח את ההקלטה ל-Gemini בשמך. זה בחינם ולוקח כשתי דקות.</p>
@@ -861,6 +1031,7 @@ function showSetup() {
     </section>
     ${privacyHtml()}`
   );
+  bindInstall();
   bindKeyForm(() => {
     location.hash = '#/';
     route();
@@ -883,41 +1054,70 @@ function dayLabel(ymd) {
   return `יום ${HE_DAYS[new Date(+yy, +mm - 1, +dd).getDay()]} · ${dd}.${mm}.${yy}`;
 }
 
-function installCardHtml() {
+function installCardHtml(canDismiss = true) {
   if (isStandalone()) return '';
   let dismissed = false;
   try {
-    dismissed = localStorage.getItem('cs.installDismissed') === '1';
+    dismissed = canDismiss && localStorage.getItem('cs.installDismissed') === '1';
   } catch (e) {
     /* אין אחסון */
   }
   if (dismissed) return '';
   return `<section class="card soft" id="installCard">
-    <b>כדאי להתקין את האתר כאפליקציה.</b>
-    <p class="small" style="margin:4px 0 10px">כך הוא יופיע בתפריט השיתוף של הטלפון, ואפשר יהיה לשלוח אליו הקלטות ישירות.</p>
-    <div class="row">${
-      state.installPrompt
-        ? '<button class="btn primary" id="installBtn" type="button">התקנה</button>'
-        : '<span class="small">בכרום: ⋮ ← <b>הוספה למסך הבית</b> ← <b>התקנה</b></span>'
-    }<button class="btn" id="installLater" type="button" style="flex:0 0 auto">לא עכשיו</button></div>
+    <b>התקנה למסך הבית</b>
+    <p class="small" style="margin:4px 0 10px">כך "סיכום שיחה" ייפתח כמו אפליקציה ויופיע בתפריט השיתוף של הטלפון, ואפשר יהיה לשלוח אליו הקלטות ישירות.</p>
+    <div class="row"><button class="btn primary" data-install type="button">${ICONS.install}התקנה למסך הבית</button>${
+      canDismiss ? '<button class="btn" id="installLater" type="button" style="flex:0 0 auto">לא עכשיו</button>' : ''
+    }</div>
   </section>`;
 }
 
+async function doInstall() {
+  const p = state.installPrompt;
+  if (!p) {
+    showInstallHelp();
+    return;
+  }
+  state.installPrompt = null;
+  try {
+    p.prompt();
+    const choice = await p.userChoice;
+    if (choice && choice.outcome === 'accepted') toast('מתקין… הסמל יופיע במסך הבית', 4000);
+  } catch (e) {
+    showInstallHelp();
+  }
+}
+
+function showInstallHelp() {
+  let d = $('#installHelp');
+  if (!d) {
+    d = document.createElement('dialog');
+    d.id = 'installHelp';
+    d.className = 'sheet';
+    document.body.appendChild(d);
+  }
+  const samsung = /SamsungBrowser/i.test(navigator.userAgent);
+  const ios = /iPhone|iPad/i.test(navigator.userAgent);
+  const steps = ios
+    ? '<li>לחץ על כפתור <b>השיתוף</b> (ריבוע עם חץ) בתחתית המסך.</li><li>בחר <b>הוסף למסך הבית</b>.</li><li>לחץ <b>הוסף</b>.</li>'
+    : samsung
+      ? '<li>לחץ על <b>☰</b> (תפריט) בתחתית המסך.</li><li>בחר <b>הוסף דף אל</b> ← <b>מסך הבית</b>.</li><li>לחץ <b>הוסף</b>.</li>'
+      : '<li>לחץ על <b>⋮</b> (שלוש נקודות) בפינה העליונה של כרום.</li><li>בחר <b>הוספה למסך הבית</b> (או <b>התקנת האפליקציה</b>).</li><li>לחץ <b>התקנה</b>.</li>';
+  d.innerHTML = `<h2>התקנה למסך הבית</h2><ol class="steps">${steps}</ol>
+    <p class="small muted">אחרי ההתקנה יופיע במסך הבית סמל ירוק בשם "סיכום שיחה".</p>
+    <button class="btn primary block" type="button" id="closeHelp">הבנתי</button>`;
+  $('#closeHelp', d).onclick = () => d.close();
+  if (d.showModal) d.showModal();
+  else d.setAttribute('open', '');
+}
+
+function updateHeaderInstall() {
+  const b = $('#hdrInstall');
+  if (b) b.hidden = isStandalone();
+}
+
 function bindInstall() {
-  const b = $('#installBtn');
-  if (b)
-    b.onclick = async () => {
-      const p = state.installPrompt;
-      if (!p) return;
-      state.installPrompt = null;
-      p.prompt();
-      try {
-        await p.userChoice;
-      } catch (e) {
-        /* בוטל */
-      }
-      route();
-    };
+  $$('[data-install]').forEach((b) => (b.onclick = doInstall));
   const later = $('#installLater');
   if (later)
     later.onclick = () => {
@@ -982,7 +1182,7 @@ async function renderPending() {
     items
       .map(
         (x) => `<section class="card ${x.status === 'error' ? 'err' : ''}">
-      <div class="pending"><div><div class="nm">${esc(x.name)}</div><div class="small muted">${fmtSize(x.size)}</div></div>
+      <div class="pending"><div><div class="nm">${recordingLabel(x.name)}</div><div class="small muted">${fmtSize(x.size)}</div></div>
       <div class="row"><button class="btn primary" data-run="${esc(x.id)}" type="button">${x.status === 'error' ? 'נסה שוב' : 'סכם עכשיו'}</button>
       <button class="btn danger" data-del="${esc(x.id)}" type="button">מחיקה</button></div></div>
       ${x.error ? `<p class="small" style="margin:8px 0 0">${esc(x.error)}</p>` : ''}
@@ -1042,14 +1242,7 @@ function renderHistory(calls, q) {
 
 /* --- מסך שיחה --- */
 
-async function showCall(id) {
-  const rec = await csStore.get('calls', id);
-  if (!rec) {
-    toast('הסיכום לא נמצא');
-    location.hash = '#/';
-    return;
-  }
-  const s = rec.summary;
+function summaryBodyHtml(s) {
   const list = (title, arr, cls, fn) =>
     arr.length ? `<h3>${title}</h3><ul>${arr.map((x) => `<li${cls ? ` class="${cls}"` : ''}>${fn ? fn(x) : esc(x)}</li>`).join('')}</ul>` : '';
   const taskHtml = (t) => {
@@ -1058,18 +1251,32 @@ async function showCall(id) {
     if (t.due) bits.push('עד ' + esc(shortDate(t.due)));
     return `${PRIORITY_MARK[t.priority] || ''}${esc(t.title)}${bits.length ? ` <small>— ${bits.join(' · ')}</small>` : ''}`;
   };
-  const speakers = [];
-  for (const l of rec.transcript) if (!speakers.includes(l.speaker)) speakers.push(l.speaker);
-  const body =
-    s.kind === 'no_call'
-      ? `<p>${esc(s.headline || 'לא הייתה שיחה של ממש (תא קולי או ניתוק).')}</p>`
-      : `${s.headline ? `<p class="headline">${esc(s.headline)}</p>` : ''}
+  if (s.kind === 'no_call') return `<p>${esc(s.headline || 'לא הייתה שיחה של ממש (תא קולי או ניתוק).')}</p>`;
+  return `${s.headline ? `<p class="headline">${esc(s.headline)}</p>` : ''}
       ${s.nextStep ? `<div class="next">⚡ <b>הצעד הבא:</b> ${esc(s.nextStep)}</div>` : ''}
       ${list('📌 עיקרי הדברים', s.keyPoints)}
       ${list('✅ החלטות והסכמות', s.decisions)}
       ${list('📋 משימות', s.tasks, 'task', taskHtml)}
       ${list('🔢 פרטים', s.details)}
       ${s.tags.length ? `<div class="tags">${s.tags.map((t) => `<span class="tag">#${esc(t)}</span>`).join('')}</div>` : ''}`;
+}
+
+function fmtElapsed(sec) {
+  if (!sec) return '';
+  return sec < 60 ? `${sec} שניות` : `${fmtDuration(sec)} דקות`;
+}
+
+async function showCall(id) {
+  const rec = await csStore.get('calls', id);
+  if (!rec) {
+    toast('הסיכום לא נמצא');
+    location.hash = '#/';
+    return;
+  }
+  const s = rec.summary;
+  const speakers = [];
+  for (const l of rec.transcript) if (!speakers.includes(l.speaker)) speakers.push(l.speaker);
+  const body = summaryBodyHtml(s);
   setView(
     'call',
     `<p style="margin:0 0 8px"><a href="#/">→ כל השיחות</a></p>
@@ -1096,7 +1303,7 @@ async function showCall(id) {
     </details>`
         : `<p class="small muted">${rec.partial ? 'השיחה ארוכה מדי לתמלול מלא, לכן נשמר סיכום בלבד.' : 'אין תמלול לשיחה הזו.'}</p>`
     }
-    <p class="small muted">סוכם ב-${esc(String(MODEL_NAMES[rec.model] || rec.model).replace(/\s*\(.*\)$/, ''))}<br><bdi dir="auto">${esc(rec.fileName)}</bdi></p>
+    <p class="small muted">סוכם ב-${esc(String(MODEL_NAMES[rec.model] || rec.model).replace(/\s*\(.*\)$/, ''))}${rec.elapsedSec ? ' תוך ' + fmtElapsed(rec.elapsedSec) : ''}<br><bdi dir="auto">${esc(rec.fileName)}</bdi></p>
     <button class="btn danger" id="delCall" type="button">מחיקת הסיכום</button>`
   );
   $('#shCopy').onclick = async () => toast((await copyText(shareText(rec, true))) ? 'הסיכום הועתק ✓' : 'לא הצלחתי להעתיק');
@@ -1224,16 +1431,14 @@ async function showGuide() {
     'guide',
     `<p style="margin:0 0 8px"><a href="#/">→ חזרה</a></p>
     <h1>סיכום אוטומטי אחרי כל שיחה</h1>
-    <p>בסוף כל שיחה מוקלטת תקפוץ התראה: <b>"לסכם את השיחה?"</b>. לחיצה על <b>כן</b> שולחת את ההקלטה לכאן, והסיכום מופיע אחרי כחצי דקה.</p>
+    <p>בסוף כל שיחה מוקלטת תקפוץ שאלה: <b>"לסכם את השיחה?"</b>. לחיצה על <b>כן</b> פותחת את "סיכום שיחה". לוחצים על <b>בחירת הקלטה</b>, בוחרים את ההקלטה הראשונה ברשימה, והסיכום מתחיל.</p>
     <section class="card"><h2>1. הקלטת שיחות אוטומטית</h2>
       <p class="small">באפליקציית <b>טלפון</b>: ⋮ ← <b>הגדרות</b> ← <b>הקלטת שיחות</b> ← הפעלת <b>הקלטה אוטומטית</b>. בטלפונים של סמסונג ההקלטות נשמרות בתיקייה Recordings/Call.</p></section>
     <section class="card"><h2>2. התקנת האתר כאפליקציה ${installed ? '<span class="badge" style="background:var(--accent-soft);color:var(--accent)">מותקן ✓</span>' : ''}</h2>
       ${
         installed
           ? '<p class="small">האפליקציה מותקנת ומופיעה בתפריט השיתוף.</p>'
-          : state.installPrompt
-            ? '<button class="btn primary" id="installBtn" type="button">התקנה</button>'
-            : '<p class="small">בכרום: ⋮ ← <b>הוספה למסך הבית</b> ← <b>התקנה</b>. אחרי ההתקנה "סיכום שיחה" יופיע בתפריט השיתוף.</p>'
+          : `<p class="small">אחרי ההתקנה "סיכום שיחה" יופיע במסך הבית ובתפריט השיתוף.</p><button class="btn primary" data-install type="button">${ICONS.install}התקנה למסך הבית</button>`
       }</section>
     <section class="card"><h2>3. MacroDroid (חינם)</h2>
       <ol class="steps">
@@ -1262,17 +1467,44 @@ async function onPick(e) {
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   state.installPrompt = e;
-  if (state.view === 'home' || state.view === 'guide') {
-    const card = $('#installCard');
-    if (card || state.view === 'guide') route();
-  }
 });
 window.addEventListener('appinstalled', () => {
   state.installPrompt = null;
-  toast('האפליקציה הותקנה ✓');
+  toast('האפליקציה הותקנה ✓ הסמל נמצא במסך הבית', 4000);
+  const card = $('#installCard');
+  if (card) card.remove();
 });
 
+// סגנון לכפתור ההתקנה בכותרת ולחלון ההסבר
+function addExtraUi() {
+  const css = document.createElement('style');
+  css.textContent = `dialog.sheet{border:0;border-radius:18px;padding:18px;width:min(92vw,420px);background:var(--surface);color:var(--ink);box-shadow:0 10px 40px rgba(0,0,0,.25)}
+dialog.sheet::backdrop{background:rgba(0,0,0,.4)}
+.hdr-install{min-height:36px;padding:4px 12px;font-size:14px;gap:6px}
+.hdr-install svg{width:18px;height:18px}`;
+  document.head.appendChild(css);
+  const wrap = $('.top .wrap');
+  const brand = $('.brand', wrap);
+  if (wrap && brand && !$('#hdrInstall')) {
+    const b = document.createElement('button');
+    b.id = 'hdrInstall';
+    b.type = 'button';
+    b.className = 'btn primary hdr-install';
+    b.innerHTML = ICONS.install + 'התקנה';
+    b.setAttribute('aria-label', 'התקנה למסך הבית');
+    b.onclick = doInstall;
+    brand.after(b);
+  }
+  updateHeaderInstall();
+  try {
+    matchMedia('(display-mode: standalone)').addEventListener('change', updateHeaderInstall);
+  } catch (e) {
+    /* דפדפן ישן */
+  }
+}
+
 async function init() {
+  addExtraUi();
   try {
     await loadSettings();
   } catch (e) {
