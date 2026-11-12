@@ -2,7 +2,7 @@
    ההקלטה נשלחת ישירות מהמכשיר ל-Gemini API עם המפתח של המשתמש. אין שרת ביניים. */
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const API = 'https://generativelanguage.googleapis.com';
 const MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
 const MODEL_NAMES = {
@@ -386,7 +386,15 @@ const partsText = (c) =>
 
 // הזרמה (SSE): הטקסט מגיע בחלקים, כך שאפשר להציג את הסיכום עוד לפני שהתמלול נגמר.
 // מחזיר null אם ההזרמה לא זמינה או שהפורמט לא מוכר – ואז עוברים לבקשה רגילה.
+// מדידת זמנים לכל פנייה ל-Gemini, כדי לדעת איפה הזמן הולך
+function traceStart(model, kind) {
+  const t = { model, kind, start: Date.now(), first: 0, end: 0, status: 0 };
+  if (state.trace) state.trace.push(t);
+  return t;
+}
+
 async function gstream(model, body, signal, onText) {
+  const tr = traceStart(model, 'stream');
   let res;
   try {
     res = await fetch(`${API}/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`, {
@@ -409,6 +417,7 @@ async function gstream(model, body, signal, onText) {
     return { ok: false, status: res.status, json };
   }
   if (!res.body || !res.body.getReader) return null;
+  tr.status = res.status;
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let buf = '';
@@ -443,6 +452,7 @@ async function gstream(model, body, signal, onText) {
     const delta = partsText(c);
     if (delta) {
       text += delta;
+      if (!tr.first) tr.first = Date.now();
       if (onText) onText(text);
     }
     if (c.finishReason) finish = c.finishReason;
@@ -459,6 +469,7 @@ async function gstream(model, body, signal, onText) {
     if (error) break;
   }
   if (buf.trim()) handle(buf);
+  tr.end = Date.now();
   if (error) return error;
   if (!events) return null;
   return { ok: true, status: 200, text, finish, block };
@@ -486,11 +497,14 @@ async function generate(model, part, meta, opts, signal, onText) {
       }
     }
     if (!res) {
+      const tr = traceStart(model, 'plain');
       res = await gfetch(
         `/v1beta/models/${encodeURIComponent(model)}:generateContent`,
         { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
         signal
       );
+      tr.end = tr.first = Date.now();
+      tr.status = res.status;
       if (res.ok) {
         const cand = res.json && res.json.candidates && res.json.candidates[0];
         if (!cand) {
@@ -532,15 +546,18 @@ function earlySummary(text) {
   return obj && typeof obj === 'object' && obj.headline ? normalizeSummary(obj) : null;
 }
 
-function modelOrder() {
+// לסיכום בלבד: קודם המודל המהיר ביותר. לתמלול: קודם המדויק ביותר.
+const FAST_MODELS = ['gemini-3.5-flash-lite', 'gemini-3.6-flash', 'gemini-3.8-flash'];
+function modelOrder(mode) {
+  const base = mode === 'summary' ? FAST_MODELS : MODELS;
   const m = settings.model;
-  return m && m !== 'auto' ? [m, ...MODELS.filter((x) => x !== m)] : MODELS.slice();
+  return m && m !== 'auto' ? [m, ...base.filter((x) => x !== m)] : base.slice();
 }
 
 // mode: 'summary' (מהיר, ברירת מחדל), 'full' (סיכום + תמלול), 'transcript' (תמלול בלבד, לפי בקשה)
 async function runGemini(part, meta, signal, onStep, onText, mode = 'full', extra = {}) {
   let lastErr = null;
-  for (const model of modelOrder()) {
+  for (const model of modelOrder(mode)) {
     try {
       if (mode !== 'full') {
         const opts = mode === 'summary' ? { summaryOnly: true } : { transcriptOnly: true, otherParty: extra.otherParty || '' };
@@ -812,13 +829,18 @@ async function summarizeRecording(item, signal, onStep, onText) {
   }
   onStep('read');
   const durationSec = await audioDuration(item.blob);
+  state.trace = [];
+  const t0 = Date.now();
   const { part, uploaded } = await audioPart(item.blob, mime, signal, onStep);
+  const prepMs = Date.now() - t0;
   onStep('ai');
   const fast = !settings.autoTranscript;
   try {
     const result = await runGemini(part, meta, signal, onStep, onText, fast ? 'summary' : 'full');
     const s = normalizeSummary(result.data);
+    const timing = { prepMs, sizeKB: Math.round(item.size / 1024), calls: (state.trace || []).map((t) => ({ model: t.model, kind: t.kind, status: t.status, waitMs: (t.first || t.end) - t.start, totalMs: t.end - t.start })) };
     return {
+      timing,
       id: csNewId('c-'),
       createdAt: new Date().toISOString(),
       fileName: item.name,
@@ -1330,7 +1352,8 @@ async function showHome() {
   if (state.expect) {
     const m = callMeta(state.expect, 0);
     expectHint = `<section class="card warn"><b>בחר את ההקלטה של השיחה האחרונה</b>
-      <p class="small" style="margin:4px 0 0">${esc(m.contact || state.expect)}${m.fromName ? ' · ' + esc(m.time) : ''} – בדרך כלל היא הראשונה ברשימה.</p></section>`;
+      <p class="small" style="margin:4px 0 0">${esc(m.contact || state.expect)}${m.fromName ? ' · ' + esc(m.time) : ''} – בדרך כלל היא הראשונה ברשימה.</p>
+      <p class="small" style="margin:4px 0 0">אם נפתחת תיקיית <b>הורדות</b>: לחץ על ☰ (או על שם התיקייה למעלה) ← <b>Recordings</b> ← <b>Call</b>.</p></section>`;
   }
   setView(
     'home',
@@ -1456,6 +1479,17 @@ function summaryBodyHtml(s) {
       ${s.tags.length ? `<div class="tags">${s.tags.map((t) => `<span class="tag">#${esc(t)}</span>`).join('')}</div>` : ''}`;
 }
 
+// פירוט זמנים קצר (לאבחון איטיות)
+function timingHtml(rec) {
+  const t = rec.timing;
+  if (!t || !t.calls) return '';
+  const s = (ms) => (ms / 1000).toFixed(1);
+  const calls = t.calls
+    .map((c) => `${String(c.model || '').replace('gemini-', '')}${c.status && c.status !== 200 ? ' [' + c.status + ']' : ''}: המתנה ${s(c.waitMs)} · סה״כ ${s(c.totalMs)}`)
+    .join(' | ');
+  return `<br><span dir="auto">פירוט: קובץ ${t.sizeKB}KB · הכנה ${s(t.prepMs)} ש׳ · ${esc(calls)}</span>`;
+}
+
 function fmtElapsed(sec) {
   if (!sec) return '';
   return sec === 1 ? 'שנייה אחת' : sec < 60 ? `${sec} שניות` : `${fmtDuration(sec)} דקות`;
@@ -1501,7 +1535,7 @@ async function showCall(id) {
           <button class="btn primary" id="mkTr" type="button" style="flex:0 0 auto">📝 הכנת תמלול מלא</button></div></section>`
           : `<p class="small muted">${rec.partial ? 'השיחה ארוכה מדי לתמלול מלא, לכן נשמר סיכום בלבד.' : 'אין תמלול לשיחה הזו. כדי לתמלל, שתף לכאן שוב את ההקלטה.'}</p>`
     }
-    <p class="small muted">סוכם ב-${esc(String(MODEL_NAMES[rec.model] || rec.model).replace(/\s*\(.*\)$/, ''))}${rec.elapsedSec ? ' תוך ' + fmtElapsed(rec.elapsedSec) : ''}<br><bdi dir="auto">${esc(rec.fileName)}</bdi></p>
+    <p class="small muted">סוכם ב-${esc(String(MODEL_NAMES[rec.model] || rec.model).replace(/\s*\(.*\)$/, ''))}${rec.elapsedSec ? ' תוך ' + fmtElapsed(rec.elapsedSec) : ''}<br><bdi dir="auto">${esc(rec.fileName)}</bdi>${timingHtml(rec)}</p>
     <button class="btn danger" id="delCall" type="button">מחיקת הסיכום</button>`
   );
   $('#shCopy').onclick = async () => toast((await copyText(shareText(rec, true))) ? 'הסיכום הועתק ✓' : 'לא הצלחתי להעתיק');
@@ -1751,6 +1785,26 @@ async function pruneAudio() {
   } catch (e) {
     /* לא חובה */
   }
+}
+
+// "פתח באמצעות ← סיכום שיחה" (File Handling API, כשהדפדפן תומך)
+if ('launchQueue' in window) {
+  window.launchQueue.setConsumer(async (params) => {
+    if (!params || !params.files || !params.files.length) return;
+    const files = [];
+    for (const h of params.files) {
+      try {
+        files.push(await h.getFile());
+      } catch (e) {
+        /* קובץ לא נגיש */
+      }
+    }
+    if (!files.length) return;
+    state.expect = '';
+    await addFiles(files, 'open');
+    if (settings.apiKey) processQueue();
+    else route();
+  });
 }
 
 async function init() {
