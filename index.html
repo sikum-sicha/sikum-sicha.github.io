@@ -81,6 +81,11 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .iconbtn { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; color: var(--ink-2); text-decoration: none; border: 0; background: transparent; cursor: pointer; }
 .iconbtn:hover, .iconbtn:focus-visible { background: var(--surface-2); }
 .iconbtn svg { width: 22px; height: 22px; }
+.hdr-auto { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 6px 14px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-weight: 700; font-size: 15px; text-decoration: none; white-space: nowrap; }
+.hdr-auto svg { width: 18px; height: 18px; }
+.hdr-auto:hover { filter: brightness(1.06); }
+.brand span { white-space: nowrap; }
+@media (max-width: 380px) { .brand { font-size: 16px; gap: 8px; } .hdr-auto { padding: 6px 10px; font-size: 14px; } }
 
 main { padding: 16px 0 40px; }
 h1 { font-size: 22px; line-height: 1.3; margin: 4px 0 12px; }
@@ -187,8 +192,8 @@ details.tr[open] > summary::after { content: "▴"; }
 <header class="top">
   <div class="wrap">
     <a class="brand" href="#/"><img src="icon-192.png" alt=""><span>סיכום שיחה</span></a>
-    <a class="iconbtn" href="#/guide" aria-label="הפעלה אוטומטית אחרי כל שיחה" title="אוטומציה">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+    <a class="hdr-auto" href="#/guide" aria-label="הפעלה אוטומטית אחרי כל שיחה ועזרה">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>אוטומציה
     </a>
     <a class="iconbtn" href="#/settings" aria-label="הגדרות" title="הגדרות">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
