@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>סיכום שיחה</title>
+<meta name="description" content="תמלול וסיכום של הקלטות שיחה בעברית, ישירות מהטלפון. בלי שרת, עם מפתח Gemini אישי וחינמי.">
+<meta name="theme-color" content="#1f5f57" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14201e" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root {
+  --bg: #f5f3ee;
+  --surface: #ffffff;
+  --surface-2: #efece5;
+  --ink: #1d2422;
+  --ink-2: #4c5754;
+  --muted: #7a8481;
+  --line: #e2ded5;
+  --accent: #1f5f57;
+  --accent-ink: #ffffff;
+  --accent-soft: #e1eeeb;
+  --warn: #9a5b00;
+  --warn-soft: #fbf0dc;
+  --danger: #b3261e;
+  --danger-soft: #fbe5e3;
+  --ok: #2e7d32;
+  --s1: #1f5f57;
+  --s2: #8a4b14;
+  --s3: #5b4a9a;
+  --shadow: 0 1px 2px rgba(20, 30, 28, .06), 0 4px 14px rgba(20, 30, 28, .06);
+  --radius: 16px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101615;
+    --surface: #18211f;
+    --surface-2: #1f2a28;
+    --ink: #e8eeec;
+    --ink-2: #bcc7c4;
+    --muted: #8d9895;
+    --line: #2a3634;
+    --accent: #5fb3a6;
+    --accent-ink: #0d1716;
+    --accent-soft: #1c3330;
+    --warn: #f0b75e;
+    --warn-soft: #33281a;
+    --danger: #f08b84;
+    --danger-soft: #3a1f1d;
+    --ok: #7fcf86;
+    --s1: #6cc3b5;
+    --s2: #e3a56a;
+    --s3: #b3a5f0;
+    --shadow: none;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101615; --surface: #18211f; --surface-2: #1f2a28; --ink: #e8eeec; --ink-2: #bcc7c4; --muted: #8d9895;
+  --line: #2a3634; --accent: #5fb3a6; --accent-ink: #0d1716; --accent-soft: #1c3330; --warn: #f0b75e; --warn-soft: #33281a;
+  --danger: #f08b84; --danger-soft: #3a1f1d; --ok: #7fcf86; --s1: #6cc3b5; --s2: #e3a56a; --s3: #b3a5f0; --shadow: none; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", "Noto Sans Hebrew", Arial, sans-serif;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+a { color: var(--accent); }
+button, input, select, textarea { font: inherit; color: inherit; }
+.wrap { max-width: 680px; margin: 0 auto; padding: 0 16px; }
+
+/* כותרת */
+.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+.top .wrap { display: flex; align-items: center; gap: 8px; height: 56px; }
+.brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); font-weight: 700; font-size: 18px; margin-inline-end: auto; }
+.brand img { width: 30px; height: 30px; border-radius: 8px; }
+.iconbtn { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; color: var(--ink-2); text-decoration: none; border: 0; background: transparent; cursor: pointer; }
+.iconbtn:hover, .iconbtn:focus-visible { background: var(--surface-2); }
+.iconbtn svg { width: 22px; height: 22px; }
+
+main { padding: 16px 0 40px; }
+h1 { font-size: 22px; line-height: 1.3; margin: 4px 0 12px; }
+h2 { font-size: 18px; margin: 0 0 8px; }
+h3 { font-size: 15px; margin: 18px 0 6px; color: var(--ink-2); }
+p { margin: 0 0 10px; }
+.muted { color: var(--muted); }
+.small { font-size: 14px; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); margin-bottom: 14px; }
+.card.soft { background: var(--accent-soft); border-color: transparent; box-shadow: none; }
+.card.warn { background: var(--warn-soft); border-color: transparent; box-shadow: none; }
+.card.err { background: var(--danger-soft); border-color: transparent; box-shadow: none; }
+
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-decoration: none; cursor: pointer; font-weight: 600; }
+.btn:hover { background: var(--surface-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.primary:hover { filter: brightness(1.06); }
+.btn.danger { color: var(--danger); }
+.btn.block { display: flex; width: 100%; }
+.btn[disabled] { opacity: .55; cursor: default; }
+.btn svg { width: 20px; height: 20px; flex: none; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row > .btn { flex: 1 1 auto; }
+
+.pick { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 128px; border-radius: 20px; border: 2px dashed color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); color: var(--accent); cursor: pointer; text-align: center; padding: 18px; margin-bottom: 14px; }
+.pick b { font-size: 19px; }
+.pick span { color: var(--ink-2); font-size: 14px; }
+.pick svg { width: 34px; height: 34px; }
+.pick.pulse { animation: pulse 1.6s ease-in-out infinite; border-style: solid; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--accent) 18%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .pick.pulse { animation: none; } }
+
+label.field { display: block; margin: 12px 0; }
+label.field > span { display: block; font-weight: 600; margin-bottom: 6px; }
+.input, select, textarea { width: 100%; min-height: 44px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
+textarea { min-height: 84px; resize: vertical; }
+.input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ltr { direction: ltr; text-align: left; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 15px; }
+.check { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0; }
+.check input { width: 20px; height: 20px; margin-top: 3px; accent-color: var(--accent); }
+
+ol.steps { padding: 0; margin: 0; list-style: none; counter-reset: s; }
+ol.steps > li { counter-increment: s; position: relative; padding: 2px 44px 14px 0; }
+ol.steps > li::before { content: counter(s); position: absolute; right: 0; top: 0; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; font-size: 15px; }
+ol.steps b { font-weight: 700; }
+
+/* רשימת שיחות */
+.search { margin: 6px 0 10px; }
+.day { font-size: 13px; font-weight: 700; color: var(--muted); margin: 18px 4px 6px; }
+.list { display: flex; flex-direction: column; gap: 8px; }
+.item { display: grid; grid-template-columns: 36px 1fr auto; gap: 4px 10px; align-items: start; padding: 12px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); text-decoration: none; color: var(--ink); }
+.item:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.item .ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--surface-2); font-size: 18px; grid-row: span 2; }
+.item .who { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item .t { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.item .hl { grid-column: 2 / 4; color: var(--ink-2); font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pending { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.pending .nm { font-weight: 600; word-break: break-word; }
+
+/* סיכום */
+.sum .who { font-size: 20px; font-weight: 800; margin: 0; }
+.sum .when { color: var(--muted); font-size: 14px; margin: 2px 0 12px; }
+.sum .headline { font-size: 18px; font-weight: 700; line-height: 1.45; margin: 0 0 12px; }
+.sum .next { background: var(--warn-soft); border-radius: 12px; padding: 10px 12px; margin-bottom: 6px; }
+.sum ul { margin: 0; padding-inline-start: 20px; }
+.sum li { margin: 3px 0; }
+.sum .task small { color: var(--muted); }
+.tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
+.tag { font-size: 13px; padding: 2px 10px; border-radius: 999px; background: var(--surface-2); color: var(--ink-2); }
+.badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); margin-inline-start: 6px; vertical-align: middle; }
+.share { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 14px 0; }
+.share .btn { flex-direction: column; gap: 2px; font-size: 13px; padding: 10px 4px; min-height: 64px; }
+.share .btn svg { width: 22px; height: 22px; }
+details.tr { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 14px; }
+details.tr > summary { cursor: pointer; padding: 14px 16px; font-weight: 700; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+details.tr > summary::-webkit-details-marker { display: none; }
+details.tr > summary::after { content: "▾"; color: var(--muted); }
+details.tr[open] > summary::after { content: "▴"; }
+.lines { padding: 0 16px 8px; }
+.line { padding: 8px 0; border-top: 1px solid var(--line); }
+.line .sp { font-weight: 700; font-size: 14px; }
+.line .tm { color: var(--muted); font-size: 12px; margin: 0 8px; direction: ltr; unicode-bidi: isolate; }
+.line .tx { margin-top: 2px; }
+.sp.c0 { color: var(--s1); } .sp.c1 { color: var(--s2); } .sp.c2 { color: var(--s3); }
+.tr .row { padding: 0 16px 16px; }
+
+/* עיבוד */
+.job { text-align: center; padding: 26px 16px; }
+.spinner { width: 46px; height: 46px; border-radius: 50%; border: 4px solid var(--accent-soft); border-top-color: var(--accent); margin: 0 auto 14px; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.jobsteps { list-style: none; padding: 0; margin: 14px auto 6px; max-width: 300px; text-align: start; }
+.jobsteps li { padding: 4px 0; color: var(--muted); }
+.jobsteps li.on { color: var(--ink); font-weight: 700; }
+.jobsteps li.done { color: var(--ok); }
+
+#toast { position: fixed; inset-inline: 16px; bottom: calc(18px + env(safe-area-inset-bottom)); margin: 0 auto; max-width: 520px; background: var(--ink); color: var(--bg); padding: 12px 16px; border-radius: 12px; font-weight: 600; opacity: 0; transform: translateY(12px); transition: .2s; pointer-events: none; z-index: 20; text-align: center; }
+#toast.show { opacity: 1; transform: none; }
+.foot { text-align: center; color: var(--muted); font-size: 13px; margin-top: 28px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#/"><img src="icon-192.png" alt=""><span>סיכום שיחה</span></a>
+    <a class="iconbtn" href="#/guide" aria-label="הפעלה אוטומטית אחרי כל שיחה" title="אוטומציה">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+    </a>
+    <a class="iconbtn" href="#/settings" aria-label="הגדרות" title="הגדרות">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    </a>
+  </div>
+</header>
+<main class="wrap" id="view" tabindex="-1"></main>
+<div id="toast" role="status" aria-live="polite"></div>
+<input type="file" id="picker" class="sr" accept="audio/*,.m4a,.mp3,.aac,.wav,.ogg,.opus,.flac,.amr,.3gp" multiple aria-hidden="true" tabindex="-1">
+<script src="store.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
