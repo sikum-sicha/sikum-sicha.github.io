@@ -2,7 +2,7 @@
    ההקלטה נשלחת ישירות מהמכשיר ל-Gemini API עם המפתח של המשתמש. אין שרת ביניים. */
 'use strict';
 
-const APP_VERSION = '1.1.1';
+const APP_VERSION = '1.1.2';
 const API = 'https://generativelanguage.googleapis.com';
 const MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
 const MODEL_NAMES = {
@@ -1464,10 +1464,12 @@ async function showGuide() {
     <section class="card"><h2>3. MacroDroid (חינם)</h2>
       <ol class="steps">
         <li>התקן את <a href="${MACRODROID_URL}" target="_blank" rel="noopener">MacroDroid</a> מחנות Play.</li>
-        <li>${hasMacro ? `<a class="btn primary" href="${MACRO_FILE}" download>הורדת קובץ המאקרו</a>` : 'קובץ המאקרו יעלה לכאן בקרוב.'}</li>
-        <li>פתח את הקובץ שהורד (מההתראה או מ"הקבצים שלי" ← הורדות) ובחר <b>MacroDroid</b> ← <b>ייבוא</b>.</li>
-        <li>MacroDroid יבקש הרשאות לקבצים, להתראות ולמצב השיחה. אשר את כולן.</li>
-      </ol></section>
+        <li>${hasMacro ? `<a class="btn primary" href="${MACRO_FILE}" download="call-summary.macro">${ICONS.install}הורדת קובץ המאקרו</a>` : 'קובץ המאקרו יעלה לכאן בקרוב.'}</li>
+        <li>פתח את הקובץ שהורד (מהתראת ההורדה, או מ<b>הקבצים שלי</b> ← <b>הורדות</b> ← <b>call-summary.macro</b>) ובחר <b>MacroDroid</b>. אם הקובץ לא נפתח ישירות: ב-MacroDroid פתח את התפריט ☰ ← <b>ייבוא/ייצוא</b> ← <b>ייבוא</b>, ובחר את הקובץ.</li>
+        <li>אשר את ההרשאות ש-MacroDroid מבקש: גישה לתיקיית ההקלטות, התראות ומצב השיחה.</li>
+        <li>ודא שהמאקרו <b>סיכום שיחה</b> פעיל (המתג שלידו דולק).</li>
+      </ol>
+      <p class="small muted">המאקרו מחכה להקלטות בתיקייה Recordings/Call (ברירת המחדל בסמסונג). אם ההקלטות בטלפון שלך נשמרות בתיקייה אחרת, פתח את המאקרו, לחץ על הטריגר <b>הקובץ שונה</b> ובחר את התיקייה הנכונה.</p></section>
     <section class="card soft"><h2>בלי אוטומציה</h2>
       <p class="small">אפשר תמיד לשתף הקלטה ידנית: <b>הקבצים שלי</b> ← Recordings ← Call ← לחיצה ארוכה על ההקלטה ← <b>שיתוף</b> ← <b>סיכום שיחה</b>. או ללחוץ כאן על <b>בחירת הקלטה</b>.</p></section>`
   );
