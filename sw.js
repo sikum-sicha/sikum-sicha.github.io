@@ -2,7 +2,7 @@
 'use strict';
 importScripts('./store.js');
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.3';
 const CACHE = 'call-summary-' + VERSION;
 const ASSETS = ['./', './index.html', './app.js', './store.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
@@ -69,3 +69,21 @@ async function receiveShare(request) {
   const target = ids.length ? './?shared=' + encodeURIComponent(ids.join(',')) : './?shareError=empty';
   return Response.redirect(new URL(target, self.registration.scope).href, 303);
 }
+
+// לחיצה על ההתראה "הסיכום מוכן": פותחים את האפליקציה ישר על הסיכום
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = new URL((event.notification.data && event.notification.data.url) || './', self.registration.scope).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(async (list) => {
+      for (const c of list) {
+        if (c.url.startsWith(self.registration.scope)) {
+          await c.focus();
+          if ('navigate' in c) await c.navigate(url).catch(() => {});
+          return;
+        }
+      }
+      await self.clients.openWindow(url);
+    })
+  );
+});
