@@ -2,7 +2,7 @@
    ההקלטה נשלחת ישירות מהמכשיר ל-Gemini API עם המפתח של המשתמש. אין שרת ביניים. */
 'use strict';
 
-const APP_VERSION = '1.1.2';
+const APP_VERSION = '1.1.3';
 const API = 'https://generativelanguage.googleapis.com';
 const MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
 const MODEL_NAMES = {
@@ -663,37 +663,104 @@ async function processItem(item) {
     return existing.id;
   }
   const controller = new AbortController();
-  state.job = { id: item.id, name: item.name, step: 'read', startedAt: Date.now(), controller, done: [] };
+  state.job = { id: item.id, name: item.name, step: 'read', startedAt: Date.now(), controller, done: [], wasHidden: document.hidden };
+  // מסמנים "בעבודה": אם האפליקציה תיסגר באמצע, בפתיחה הבאה נמשיך אוטומטית
+  await csStore.put('inbox', { ...item, status: 'working', error: '' });
   if (location.hash && location.hash !== '#/') location.hash = '#/';
   showHome();
-  let wake = null;
-  try {
-    if (navigator.wakeLock) wake = await navigator.wakeLock.request('screen');
-  } catch (e) {
-    /* לא חובה */
-  }
+  await keepScreenOn();
   const tick = setInterval(renderJobTime, 1000);
   try {
     const rec = await summarizeRecording(item, controller.signal, setJobStep, onJobText);
     rec.elapsedSec = Math.max(1, Math.round((Date.now() - state.job.startedAt) / 1000));
     await csStore.put('calls', rec);
     await csStore.del('inbox', item.id);
+    notifyDone(rec);
     return rec.id;
   } catch (e) {
+    const tries = (item.tries || 0) + 1;
+    // נקטע בגלל רשת בזמן שהאפליקציה הייתה ברקע: ננסה שוב לבד כשחוזרים אליה
+    if ((e.kind === 'network' || e.name === 'TypeError') && state.job.wasHidden && tries < 3) {
+      await csStore.put('inbox', { ...item, status: 'new', error: '', tries });
+      state.resumeOnVisible = true;
+      return '';
+    }
     const msg = e.name === 'AbortError' ? 'העיבוד בוטל.' : e instanceof AppError ? e.message : 'שגיאה: ' + (e && e.message);
-    await csStore.put('inbox', { ...item, status: 'error', error: msg, tries: (item.tries || 0) + 1 });
+    await csStore.put('inbox', { ...item, status: 'error', error: msg, tries });
+    if (e.name !== 'AbortError') notifyFailed(item, msg);
     toast(msg, 6000);
     return '';
   } finally {
     clearInterval(tick);
     try {
-      if (wake) await wake.release();
+      if (state.wake) await state.wake.release();
     } catch (e) {
       /* כבר שוחרר */
     }
+    state.wake = null;
     state.job = null;
   }
 }
+
+// המסך לא נכבה בזמן הסיכום (כשהאפליקציה פתוחה)
+async function keepScreenOn() {
+  try {
+    if (navigator.wakeLock && !document.hidden) state.wake = await navigator.wakeLock.request('screen');
+  } catch (e) {
+    /* לא חובה */
+  }
+}
+
+/* ---------- התראות: "הסיכום מוכן" כשהאפליקציה ברקע ---------- */
+
+const canNotify = () => 'Notification' in window && 'serviceWorker' in navigator;
+
+async function askNotifyPermission() {
+  if (!canNotify()) return false;
+  let p = Notification.permission;
+  if (p === 'default') {
+    try {
+      p = await Notification.requestPermission();
+    } catch (e) {
+      p = 'denied';
+    }
+  }
+  settings.notify = p === 'granted';
+  await saveSettings();
+  return settings.notify;
+}
+
+async function showNote(title, body, url, tag) {
+  if (!canNotify() || Notification.permission !== 'granted' || settings.notify === false) return;
+  if (!document.hidden) return; // האפליקציה מול העיניים – אין צורך
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification(title, { body, icon: 'icon-192.png', badge: 'icon-192.png', tag, lang: 'he', dir: 'rtl', data: { url } });
+  } catch (e) {
+    /* לא חובה */
+  }
+}
+
+function notifyDone(rec) {
+  showNote('הסיכום מוכן ✓', `${displayName(rec)}: ${rec.summary.headline || ''}`.trim(), './#/call/' + encodeURIComponent(rec.id), rec.id);
+}
+
+function notifyFailed(item, msg) {
+  showNote('הסיכום לא הצליח', `${callMeta(item.name, 0).contact || item.name}: ${msg}`, './#/', item.id);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (state.job) state.job.wasHidden = true;
+    return;
+  }
+  if (state.job) keepScreenOn();
+  else if (state.resumeOnVisible) {
+    state.resumeOnVisible = false;
+    toast('ממשיך לסכם את השיחה שנקטעה…');
+    processQueue();
+  }
+});
 
 async function summarizeRecording(item, signal, onStep, onText) {
   const meta = callMeta(item.name, item.lastModified);
@@ -775,8 +842,14 @@ function jobHtml() {
     <ul class="jobsteps">${shown
       .map(([k, label]) => `<li class="${k === j.step ? 'on' : j.done.includes(k) ? 'done' : ''}">${j.done.includes(k) ? '✓ ' : k === j.step ? '● ' : '○ '}${esc(label)}</li>`)
       .join('')}</ul>
-    <p class="small muted"><span id="jobTime">0:00</span> · כדאי להשאיר את המסך פתוח עד הסוף.</p>
-    <button class="btn" id="cancelJob" type="button">ביטול</button>
+    <p class="small muted"><span id="jobTime">0:00</span> · ${
+      notifyReady() ? 'אפשר לצאת מהאפליקציה – תקבל התראה כשהסיכום יהיה מוכן.' : 'כדאי להשאיר את האפליקציה פתוחה עד הסוף.'
+    }</p>
+    <div class="row" style="justify-content:center">${
+      canNotify() && Notification.permission === 'default' && settings.notify !== false
+        ? '<button class="btn" id="notifyMe" type="button" style="flex:0 0 auto">🔔 הודע לי כשמוכן</button>'
+        : ''
+    }<button class="btn" id="cancelJob" type="button" style="flex:0 0 auto">ביטול</button></div>
   </section><div id="jobLive">${jobLiveHtml()}</div>`;
 }
 
@@ -812,9 +885,22 @@ function onJobText(text) {
   }, 250);
 }
 
+const notifyReady = () => canNotify() && Notification.permission === 'granted' && settings.notify !== false;
+
 function bindJob() {
   const b = $('#cancelJob');
   if (b) b.onclick = () => state.job && state.job.controller.abort();
+  const n = $('#notifyMe');
+  if (n)
+    n.onclick = async () => {
+      const ok = await askNotifyPermission();
+      toast(ok ? 'אפשר לצאת מהאפליקציה – תקבל התראה כשהסיכום יהיה מוכן' : 'ההתראות לא אושרו', 4000);
+      const box = $('#job');
+      if (box && state.job) {
+        box.outerHTML = jobHtml().replace(/<div id="jobLive">[\s\S]*$/, '');
+        bindJob();
+      }
+    };
   renderJobTime();
 }
 
@@ -1373,6 +1459,11 @@ async function showSettings() {
         ${MODELS.map((m) => `<option value="${m}"${settings.model === m ? ' selected' : ''}>${esc(MODEL_NAMES[m])}</option>`).join('')}
       </select></label>
       <label class="check"><input type="checkbox" id="autoStart"${settings.autoStart !== false ? ' checked' : ''}><span>להתחיל לסכם מיד כשמשתפים לכאן הקלטה</span></label>
+      ${
+        canNotify()
+          ? `<label class="check"><input type="checkbox" id="notify"${notifyReady() ? ' checked' : ''}><span>התראה כשהסיכום מוכן (אם יצאת מהאפליקציה בינתיים)</span></label>`
+          : ''
+      }
     </section>
     ${privacyHtml()}
     <section class="card">
@@ -1416,6 +1507,17 @@ async function showSettings() {
     settings.model = e.target.value;
     saveSoon();
   };
+  if ($('#notify'))
+    $('#notify').onchange = async (e) => {
+      if (e.target.checked) {
+        const ok = await askNotifyPermission();
+        e.target.checked = ok;
+        toast(ok ? 'התראות הופעלו ✓' : 'הדפדפן לא אישר התראות. אפשר לאשר בהגדרות האתר בכרום.', 4000);
+      } else {
+        settings.notify = false;
+        await saveSettings();
+      }
+    };
   $('#theme').onchange = (e) => {
     settings.theme = e.target.value;
     applyTheme();
@@ -1543,7 +1645,20 @@ async function init() {
   $('#picker').addEventListener('change', onPick);
   window.addEventListener('hashchange', route);
   route();
-  if (shared && settings.apiKey && settings.autoStart !== false) processQueue();
+  if (!settings.apiKey) return;
+  // הקלטה שהסיכום שלה נקטע (האפליקציה נסגרה באמצע) – ממשיכים אוטומטית
+  let pending = [];
+  try {
+    pending = await csStore.all('inbox');
+  } catch (e) {
+    pending = [];
+  }
+  const interrupted = pending.filter((x) => x.status === 'working');
+  for (const x of interrupted) await csStore.put('inbox', { ...x, status: 'new' });
+  if (settings.autoStart !== false && (shared || interrupted.length || pending.some((x) => x.status === 'new'))) {
+    if (interrupted.length && !shared) toast('ממשיך לסכם שיחה שנקטעה…', 3500);
+    processQueue();
+  }
 }
 
 init();
