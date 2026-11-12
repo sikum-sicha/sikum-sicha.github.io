@@ -2,7 +2,7 @@
    ההקלטה נשלחת ישירות מהמכשיר ל-Gemini API עם המפתח של המשתמש. אין שרת ביניים. */
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 const API = 'https://generativelanguage.googleapis.com';
 const MODELS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite'];
 const MODEL_NAMES = {
@@ -1353,7 +1353,7 @@ async function showHome() {
     const m = callMeta(state.expect, 0);
     expectHint = `<section class="card warn"><b>בחר את ההקלטה של השיחה האחרונה</b>
       <p class="small" style="margin:4px 0 0">${esc(m.contact || state.expect)}${m.fromName ? ' · ' + esc(m.time) : ''} – בדרך כלל היא הראשונה ברשימה.</p>
-      <p class="small" style="margin:4px 0 0">אם נפתחת תיקיית <b>הורדות</b>: לחץ על ☰ (או על שם התיקייה למעלה) ← <b>Recordings</b> ← <b>Call</b>.</p></section>`;
+      <p class="small" style="margin:4px 0 0">אם נפתחת תיקיית <b>הורדות</b>: לחץ על ☰ (או על שם התיקייה למעלה) ← <bdi><b>Recordings</b></bdi> ← <bdi><b>Call</b></bdi>.</p></section>`;
   }
   setView(
     'home',
@@ -1362,12 +1362,13 @@ async function showHome() {
     ${state.job ? jobHtml() : ''}
     <label for="picker" class="pick${state.expect && !state.job ? ' pulse' : ''}" role="button" tabindex="0">
       ${ICONS.mic}<b>בחירת הקלטה</b><span>או שתף לכאן הקלטה מאפליקציית הטלפון או מ"הקבצים שלי"</span>
+      <span style="font-size:13px">נפתחה תיקייה אחרת? ☰ ← <bdi>Recordings</bdi> ← <bdi>Call</bdi></span>
     </label>
     <div id="pending"></div>
     <h2 style="margin-top:22px">שיחות שסוכמו</h2>
     <input class="input search" id="search" type="search" placeholder="חיפוש לפי שם, נושא או תגית" aria-label="חיפוש">
     <div id="hist"></div>
-    <p class="foot">ההקלטות נשלחות רק ל-Gemini עם המפתח שלך · בלי שרת ובלי הרשמה</p>`
+    <p class="foot">ההקלטות נשלחות רק ל-Gemini עם המפתח שלך · בלי שרת ובלי הרשמה · <a href="#/guide">עזרה</a></p>`
   );
   bindInstall();
   bindJob();
@@ -1697,11 +1698,11 @@ async function showGuide() {
   setView(
     'guide',
     `<p style="margin:0 0 8px"><a href="#/">→ חזרה</a></p>
-    <h1>סיכום אוטומטי אחרי כל שיחה</h1>
+    <h1>הפעלה אוטומטית ועזרה</h1>
     <p>בסוף כל שיחה מוקלטת תקפוץ שאלה: <b>"לסכם את השיחה?"</b>. לחיצה על <b>כן</b> פותחת את "סיכום שיחה". לוחצים על <b>בחירת הקלטה</b>, בוחרים את ההקלטה הראשונה ברשימה, והסיכום מתחיל.</p>
     <section class="card"><h2>1. הקלטת שיחות אוטומטית</h2>
-      <p class="small">באפליקציית <b>טלפון</b>: ⋮ ← <b>הגדרות</b> ← <b>הקלטת שיחות</b> ← הפעלת <b>הקלטה אוטומטית</b>. בטלפונים של סמסונג ההקלטות נשמרות בתיקייה Recordings/Call.</p></section>
-    <section class="card"><h2>2. התקנת האתר כאפליקציה ${installed ? '<span class="badge" style="background:var(--accent-soft);color:var(--accent)">מותקן ✓</span>' : ''}</h2>
+      <p class="small">באפליקציית <b>טלפון</b>: ⋮ ← <b>הגדרות</b> ← <b>הקלטת שיחות</b> ← הפעלת <b>הקלטה אוטומטית</b>. בטלפונים של סמסונג ההקלטות נשמרות בתיקייה <bdi dir="ltr">Recordings/Call</bdi>.</p></section>
+    <section class="card"><h2>2. התקנת האפליקציה ${installed ? '<span class="badge" style="background:var(--accent-soft);color:var(--accent)">מותקן ✓</span>' : ''}</h2>
       ${
         installed
           ? '<p class="small">האפליקציה מותקנת ומופיעה בתפריט השיתוף.</p>'
@@ -1712,12 +1713,27 @@ async function showGuide() {
         <li>התקן את <a href="${MACRODROID_URL}" target="_blank" rel="noopener">MacroDroid</a> מחנות Play.</li>
         <li>${hasMacro ? `<a class="btn primary" href="${MACRO_FILE}" download="call-summary.macro">${ICONS.install}הורדת קובץ המאקרו</a>` : 'קובץ המאקרו יעלה לכאן בקרוב.'}</li>
         <li>פתח את הקובץ שהורד (מהתראת ההורדה, או מ<b>הקבצים שלי</b> ← <b>הורדות</b> ← <b>call-summary.macro</b>) ובחר <b>MacroDroid</b>. אם הקובץ לא נפתח ישירות: ב-MacroDroid פתח את התפריט ☰ ← <b>ייבוא/ייצוא</b> ← <b>ייבוא</b>, ובחר את הקובץ.</li>
-        <li>אשר את ההרשאות ש-MacroDroid מבקש: גישה לתיקיית ההקלטות, התראות ומצב השיחה.</li>
+        <li><b>אישור הרשאות – חובה, פעם אחת.</b> במאקרו יופיעו אזהרות <b>"חסרה הרשאה נדרשת – הקש כדי להעניק"</b>. לחץ על כל אזהרה ואשר את מה שמבוקש:
+          <ul class="small" style="margin:6px 0 0;padding-inline-start:18px">
+            <li><b>גישה לקבצים</b> – כדי לזהות הקלטה חדשה.</li>
+            <li><b>הצגה מעל אפליקציות אחרות</b> – כדי להציג את השאלה "לסכם את השיחה?" ולפתוח את האפליקציה.</li>
+            <li><b>התראות</b> ו<b>מצב שיחה</b> – אם מתבקש.</li>
+          </ul>
+          <p class="small muted" style="margin:6px 0 0">Android לא מאפשר לשום אפליקציה לאשר הרשאות לבד. זה אישור חד-פעמי, וכשכל האזהרות נעלמות – המאקרו מוכן.</p></li>
         <li>ודא שהמאקרו <b>סיכום שיחה</b> פעיל (המתג שלידו דולק).</li>
       </ol>
-      <p class="small muted">המאקרו מחכה להקלטות בתיקייה Recordings/Call (ברירת המחדל בסמסונג). אם ההקלטות בטלפון שלך נשמרות בתיקייה אחרת, פתח את המאקרו, לחץ על הטריגר <b>הקובץ שונה</b> ובחר את התיקייה הנכונה.</p></section>
+      <p class="small muted">המאקרו מחכה להקלטות בתיקייה <bdi dir="ltr">Recordings/Call</bdi> (ברירת המחדל בסמסונג). אם ההקלטות בטלפון שלך נשמרות בתיקייה אחרת, פתח את המאקרו, לחץ על הטריגר <b>הקובץ שונה</b> ובחר את התיקייה הנכונה.</p></section>
+    <section class="card"><h2>4. בחירת ההקלטה בפעם הראשונה</h2>
+      <p class="small">כשלוחצים <b>בחירת הקלטה</b>, נפתח חלון הקבצים של הטלפון. האפליקציה לא יכולה לקבוע באיזו תיקייה הוא ייפתח – זה נקבע ב-Android.</p>
+      <p class="small">אם נפתחת תיקייה אחרת (למשל <b>הורדות</b>): לחץ על <b>☰</b> או על שם התיקייה למעלה ← <bdi><b>Recordings</b></bdi> ← <bdi><b>Call</b></bdi>, ובחר את ההקלטה. ברוב הטלפונים, מהפעם הבאה החלון ייפתח ישר בתיקייה הזו.</p></section>
     <section class="card soft"><h2>בלי אוטומציה</h2>
-      <p class="small">אפשר תמיד לשתף הקלטה ידנית: <b>הקבצים שלי</b> ← Recordings ← Call ← לחיצה ארוכה על ההקלטה ← <b>שיתוף</b> ← <b>סיכום שיחה</b>. או ללחוץ כאן על <b>בחירת הקלטה</b>.</p></section>`
+      <p class="small">אפשר תמיד לשתף הקלטה ידנית: <b>הקבצים שלי</b> ← <bdi>Recordings</bdi> ← <bdi>Call</bdi> ← לחיצה ארוכה על ההקלטה ← <b>שיתוף</b> ← <b>סיכום שיחה</b>. או ללחוץ במסך הראשי על <b>בחירת הקלטה</b>.</p></section>
+    <h2 style="margin-top:22px">שאלות נפוצות</h2>
+    <details class="tr"><summary>כמה זמן לוקח סיכום?</summary><div class="lines"><p class="small">הסיכום מגיע קודם, בלי תמלול, כדי שיהיה מהיר. תמלול מלא מכינים בלחיצה על <b>הכנת תמלול מלא</b> מתחת לסיכום. בתחתית כל סיכום כתוב כמה זמן הוא לקח. מי שרוצה תמלול בכל שיחה יכול להפעיל את זה ב<b>הגדרות</b>.</p></div></details>
+    <details class="tr"><summary>מה קורה אם יוצאים מהאפליקציה באמצע?</summary><div class="lines"><p class="small">בזמן הסיכום המסך לא נכבה. אם יוצאים מהאפליקציה, הסיכום בדרך כלל ממשיך ברקע. אם הוא נקטע, ההקלטה נשמרת וממשיכה לבד בפעם הבאה שפותחים את האפליקציה. לחיצה על <b>🔔 הודע לי כשמוכן</b> שולחת התראה כשהסיכום מוכן.</p></div></details>
+    <details class="tr"><summary>איפה נשמרים הסיכומים?</summary><div class="lines"><p class="small">רק בטלפון הזה. ההקלטה נשלחת ישירות ל-Gemini של Google עם המפתח שלך, בלי שרת ביניים. כדי לאפשר תמלול בלחיצה, ההקלטה נשמרת בטלפון עד 14 יום ונמחקת אחרי שהתמלול הוכן.</p></div></details>
+    <details class="tr"><summary>האם זה עולה כסף?</summary><div class="lines"><p class="small">המפתח החינמי של Gemini מספיק לשימוש רגיל. אם מופיעה הודעה שהמכסה נגמרה – נסה שוב מאוחר יותר; המכסה היומית מתחדשת בלילה.</p></div></details>
+    <details class="tr"><summary>הסיכום לא הצליח – מה עושים?</summary><div class="lines"><p class="small">ההקלטה נשארת במסך הראשי תחת <b>ממתינות לסיכום</b>, עם כפתור <b>נסה שוב</b>. אם כתוב שהמפתח לא תקין – החלף אותו ב<b>הגדרות</b>.</p></div></details>`
   );
   bindInstall();
 }
@@ -1749,20 +1765,20 @@ function addExtraUi() {
   const css = document.createElement('style');
   css.textContent = `dialog.sheet{border:0;border-radius:18px;padding:18px;width:min(92vw,420px);background:var(--surface);color:var(--ink);box-shadow:0 10px 40px rgba(0,0,0,.25)}
 dialog.sheet::backdrop{background:rgba(0,0,0,.4)}
-.hdr-install{min-height:36px;padding:4px 12px;font-size:14px;gap:6px}
-.hdr-install svg{width:18px;height:18px}`;
+.hdr-install{width:34px;height:34px;border:1px solid var(--line);border-radius:10px}
+.hdr-install svg{width:17px;height:17px}`;
   document.head.appendChild(css);
   const wrap = $('.top .wrap');
-  const brand = $('.brand', wrap);
-  if (wrap && brand && !$('#hdrInstall')) {
+  if (wrap && !$('#hdrInstall')) {
     const b = document.createElement('button');
     b.id = 'hdrInstall';
     b.type = 'button';
-    b.className = 'btn primary hdr-install';
-    b.innerHTML = ICONS.install + 'התקנה';
+    b.className = 'iconbtn hdr-install';
+    b.innerHTML = ICONS.install;
+    b.title = 'התקנה למסך הבית';
     b.setAttribute('aria-label', 'התקנה למסך הבית');
     b.onclick = doInstall;
-    brand.after(b);
+    wrap.appendChild(b);
   }
   updateHeaderInstall();
   try {
